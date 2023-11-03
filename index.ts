@@ -1,6 +1,4 @@
-import axios, { AxiosError, AxiosInstance, AxiosResponse } from "axios";
-
-const CONTENT_REGEX = /filename[^;=\n]*=(?:(\\?['"])(.*?)\1|(?:[^\s]+'.*?')?([^;\n]*))/i;
+import { Buffer } from "node:buffer" // cloudflare only supports buffer if you import as node:buffer
 
 export interface LuraphOptionSpec {
     readonly name: string;
@@ -43,7 +41,7 @@ export interface LuraphJobStatusResponse {
 
 export interface LuraphDownloadResponse {
     readonly fileName: string;
-    readonly data: string;
+    readonly data: Blob;
 }
 
 export interface LuraphError {
@@ -67,64 +65,71 @@ export class LuraphException extends Error {
 }
 
 export class LuraphAPI {
-    private readonly api: AxiosInstance;
+    private readonly baseUrl: string;
+    private readonly apiKey: string;
 
     constructor(apiKey: string) {
-        this.api = axios.create({
-            baseURL: "https://api.lura.ph/v1/",
-            headers: {
-                "Luraph-API-Key": apiKey
+        this.baseUrl = "https://api.lura.ph/v1/";
+        this.apiKey = apiKey;
+    }
+
+    private async request(endpoint: string, options: RequestInit = {}): Promise<any> {
+        const url = `${this.baseUrl}${endpoint}`;
+        const headers = {
+            "Luraph-API-Key": this.apiKey,
+            ...options.headers
+        };
+
+        const response = await fetch(url, { ...options, headers });
+
+        if (!response.ok) {
+            const errorData = await response.json();
+            if (errorData && errorData.errors) {
+                throw new LuraphException(errorData.errors);
             }
-        });
-
-        this.api.interceptors.response.use(this.onResponseFufilled, this.onResponseRejected);
-    }
-
-    private onResponseFufilled(resp: AxiosResponse) {
-        if(!resp.data)
-            resp.data = {};
-        return Promise.resolve(resp);
-    }
-
-    private onResponseRejected(err: AxiosError) {
-        if(err.isAxiosError && err.response && err.response.data && err.response.data.errors){
-            return Promise.reject(new LuraphException(err.response.data.errors));
+            throw new Error(`HTTP error! status: ${response.status}`);
         }
-        return Promise.reject(err);
+
+        if (options.method === 'GET' && response.headers.get('content-type')?.includes('application/json')) {
+            return response.json();
+        } else {
+            return response.blob();
+        }
     }
 
-    async getNodes() {
-        return (await this.api.get("/obfuscate/nodes")).data as LuraphNodesResponse;
+    async getNodes(): Promise<LuraphNodesResponse> {
+        return await this.request("/obfuscate/nodes");
     }
 
-    async createNewJob(node: string, script: string, fileName: string, options: LuraphOptionList) {
+    async createNewJob(node: string, script: string, fileName: string, options: LuraphOptionList): Promise<LuraphNewJobResponse> {
         script = Buffer.from(script).toString("base64");
-        return (await this.api.post("/obfuscate/new", {
-            node,
-            script,
-            fileName,
-            options
-        })).data as LuraphNewJobResponse;
+        const body = JSON.stringify({ node, script, fileName, options });
+
+        return await this.request("/obfuscate/new", {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json'
+            },
+            body: body
+        });
     }
 
-    async getJobStatus(jobId: string) {
-        const {data} = await this.api.get(`/obfuscate/status/${jobId}`);
-        return {
-            success: !data.error,
-            error: data.error
-        } as LuraphJobStatusResponse;
+    async getJobStatus(jobId: string): Promise<LuraphJobStatusResponse> {
+        return await this.request(`/obfuscate/status/${jobId}`);
     }
 
-    async downloadResult(jobId: string) {
-        const {data, headers} = await this.api.get(`/obfuscate/download/${jobId}`);
-        const fileName = (CONTENT_REGEX.exec(headers['content-disposition'] || '') || [])[2]
+    async downloadResult(jobId: string): Promise<LuraphDownloadResponse> {
+        const data = await this.request(`/obfuscate/download/${jobId}`);
+        const contentDisposition = data.headers.get('Content-Disposition');
+        const matches = /filename[^;=\n]*=((['"]).*?\2|[^;\n]*)/i.exec(contentDisposition || '');
+        const fileName = matches?.[1].replace(/['"]/g, '');
+
         return {
             data,
             fileName
-        } as LuraphDownloadResponse;
+        };
     }
-
-};
+}
 
 export default LuraphAPI;
 export const Luraph = LuraphAPI;
