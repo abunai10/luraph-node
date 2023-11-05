@@ -69,10 +69,11 @@ export class LuraphAPI {
     private readonly apiKey: string;
 
     constructor(apiKey: string) {
-        this.baseUrl = "https://api.lura.ph/v1/";
+        this.baseUrl = "https://api.lura.ph/v1";
         this.apiKey = apiKey;
     }
 
+    // This almost certainly doesn't work on edge hosting - I had to do some hacky changes, will clean up and push them
     private async request(endpoint: string, options: RequestInit = {}): Promise<any> {
         const url = `${this.baseUrl}${endpoint}`;
         const headers = {
@@ -120,13 +121,17 @@ export class LuraphAPI {
 
     async downloadResult(jobId: string): Promise<LuraphDownloadResponse> {
         const data = await this.request(`/obfuscate/download/${jobId}`);
-        const contentDisposition = data.headers.get('Content-Disposition');
-        const matches = /filename[^;=\n]*=((['"]).*?\2|[^;\n]*)/i.exec(contentDisposition || '');
-        const fileName = matches?.[1].replace(/['"]/g, '');
 
+        // For some reason Cloudflare Pages really, really doesn't like this.
+        // const contentDisposition = data.headers.get('Content-Disposition');
+        // const matches = /filename[^;=\n]*=((['"]).*?\2|[^;\n]*)/i.exec(contentDisposition || '');
+        // const fileName = matches?.[1].replace(/['"]/g, '');
+
+
+        // Due to the aforementioned issues, I have just hardcoded fileName here.
         return {
             data,
-            fileName
+            fileName: "bundle.lua"
         };
     }
 }
